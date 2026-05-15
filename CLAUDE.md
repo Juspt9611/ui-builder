@@ -15,7 +15,7 @@ ui-builder/
 │   │   │   ├── app.service.ts
 │   │   │   └── modules/
 │   │   │       ├── ai/
-│   │   │       │   ├── ai.module.ts          # conditional DI: openrouter | mock
+│   │   │       │   ├── ai.module.ts          # dynamic module (forRoot()); registers only the chosen provider via useFactory+ConfigService
 │   │   │       │   ├── ai.provider.ts        # abstract AiProvider
 │   │   │       │   ├── providers/
 │   │   │       │   │   ├── mock-ai.provider.ts
@@ -108,7 +108,7 @@ Backend port is set in [apps/backend/.env](apps/backend/.env) (`PORT=3001`).
 
 ## AI Provider
 
-The AI layer is controlled by `AI_PROVIDER` in `.env`. Two implementations exist and are both registered in the DI container — `AiModule` selects one at startup via `useFactory`:
+The AI layer is controlled by `AI_PROVIDER` in `.env`. `AiModule` is a dynamic module (`AiModule.forRoot()`) that registers only the chosen implementation — the selection happens inside a `useFactory` that injects `ConfigService`, so the env value is read during the DI resolution phase (after `ConfigModule` has loaded `.env`):
 
 | `AI_PROVIDER` | Provider | Behavior |
 |---|---|---|
@@ -209,7 +209,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **ESLint**: flat config (`eslint.config.mjs`) using `typescript-eslint` recommended-type-checked + Prettier.
 - **Module pattern**: each feature gets its own NestJS module under [apps/backend/src/modules/](apps/backend/src/modules/). `ChatsModule` and `AiModule` are the current examples. Register new modules in `AppModule`.
 - **DTOs + ValidationPipe**: all controller inputs must use a DTO class with `class-validator` decorators. The global `ValidationPipe` (whitelist + `forbidNonWhitelisted`) rejects undeclared properties automatically.
-- **Abstract provider pattern**: external services (AI, future integrations) are exposed as abstract classes (e.g. `AiProvider`) and injected via the NestJS DI token. `AiModule` uses `useFactory` to pick the implementation based on `AI_PROVIDER` env var. Both `MockAiProvider` and `OpenRouterAiProvider` are registered so either can be injected directly in tests. `ChatsService` never imports a concrete provider.
+- **Abstract provider pattern**: external services (AI, future integrations) are exposed as abstract classes (e.g. `AiProvider`) and injected via the NestJS DI token. `AiModule` is a dynamic module — call `AiModule.forRoot()` in the consuming module's `imports`. It registers only the concrete provider chosen by `AI_PROVIDER` via a `useFactory` that injects `ConfigService` (so the env value is read at DI resolution time, not at module graph construction time). Only the chosen provider is instantiated; the unused one is never created. `ChatsService` never imports a concrete provider.
 - **Env vars**: add new variables to [apps/backend/.env](apps/backend/.env) and [apps/backend/.env.example](apps/backend/.env.example). Access them via `ConfigService` from `@nestjs/config` (`isGlobal: true`, no need to import `ConfigModule` in feature modules).
 - **ESM-only packages**: the backend compiles to CommonJS. Do not add ESM-only npm packages as static imports. Use Node 22 native `fetch` for HTTP calls to external APIs — it is available globally with no additional dependencies.
 

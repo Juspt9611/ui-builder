@@ -5,8 +5,8 @@ import { ChatsService } from './chats.service';
 import { ChatsRepository } from './chats.repository';
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule.forRoot()],
   controllers: [ChatsController],
   providers: [ChatsService, ChatsRepository],
 })
-export class ChatsModule {}
+export class ChatsModule {} 
