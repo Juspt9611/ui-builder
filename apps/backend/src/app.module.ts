@@ -5,7 +5,7 @@ import { AppService } from './app.service';
 import { ChatsModule } from './modules/chats/chats.module';
 
 @Module({
-  imports: [ConfigModule.forRoot(), ChatsModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), ChatsModule],
   controllers: [AppController],
   providers: [AppService],
 })
