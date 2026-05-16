@@ -12,9 +12,9 @@ export function getChat(id: string): Promise<Chat> {
   return request<Chat>(`/chats/${id}`, { cache: 'no-store' } as RequestInit);
 }
 
-export function addMessage(chatId: string, content: string): Promise<Chat> {
+export function addMessage(chatId: string, content: string, fromMessageId?: string): Promise<Chat> {
   return request<Chat>(`/chats/${chatId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(fromMessageId ? { content, fromMessageId } : { content }),
   });
 }

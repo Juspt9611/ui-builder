@@ -41,9 +41,21 @@ export class ChatsService {
     return this.toChatResponseDto(this.getChatEntity(id));
   }
 
-  async addMessage(id: string, content: string): Promise<ChatResponseDto> {
+  async addMessage(id: string, content: string, fromMessageId?: string): Promise<ChatResponseDto> {
     const chat = this.getChatEntity(id);
-    const currentCode = chat.messages.at(-1)?.code ?? '';
+
+    let currentCode: string;
+
+    if (fromMessageId) {
+      const anchorIndex = chat.messages.findIndex((m) => m.id === fromMessageId);
+      if (anchorIndex === -1) throw new NotFoundException(`Message ${fromMessageId} not found`);
+      currentCode = chat.messages[anchorIndex].code;
+      if (anchorIndex < chat.messages.length - 1) {
+        this.chatsRepository.truncateAfter(id, fromMessageId);
+      }
+    } else {
+      currentCode = chat.messages.at(-1)?.code ?? '';
+    }
 
     const { code } = await this.aiProvider.generate({ prompt: content, currentCode });
 

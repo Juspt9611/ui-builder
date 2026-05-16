@@ -19,6 +19,6 @@ export class ChatsController {
 
   @Post(':id/messages')
   addMessage(@Param('id') id: string, @Body() dto: AddMessageDto) {
-    return this.chatsService.addMessage(id, dto.content);
+    return this.chatsService.addMessage(id, dto.content, dto.fromMessageId);
   }
 }

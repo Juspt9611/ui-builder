@@ -20,4 +20,12 @@ export class ChatsRepository {
     chat.updatedAt = new Date().toISOString();
     return chat;
   }
+
+  truncateAfter(id: string, anchorMessageId: string): Chat {
+    const chat = this.store.get(id)!;
+    const anchorIndex = chat.messages.findIndex((m) => m.id === anchorMessageId);
+    chat.messages = chat.messages.slice(0, anchorIndex + 1);
+    chat.updatedAt = new Date().toISOString();
+    return chat;
+  }
 }
