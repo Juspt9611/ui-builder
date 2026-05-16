@@ -137,16 +137,21 @@ OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free   # or any free model fr
 
 The base prompt is in [apps/backend/src/modules/ai/prompts/system-prompt.ts](apps/backend/src/modules/ai/prompts/system-prompt.ts). Key constraints enforced:
 - Return **only** the HTML document, no markdown fences, no preamble.
-- All CSS and JS must be inline — **no external CDN dependencies**.
+- All CSS and JS must be inline — no external CDN for scripts, stylesheets, or fonts.
+- **Images only** — the LLM may use `https://picsum.photos/{w}/{h}` (realistic photos) and `https://placehold.co/{w}x{h}?text={label}` (labeled placeholders). All other image hosts are forbidden; the runtime sanitizer replaces violating URLs automatically.
 - **No API calls** (`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`).
 - **No dangerous browser APIs** (`eval`, `Function()`, `document.write`, geolocation, etc.).
 - **No tracking code** (Google Analytics, GTM, pixels, beacons).
 - Static mock data embedded inline; no TODOs or placeholders.
 - On follow-ups: regenerate the full document with changes applied, never return diffs.
 
-### HTML extraction
+### HTML extraction and sanitization
 
-`extractHtmlDocument` ([apps/backend/src/modules/ai/providers/extract-html-document.ts](apps/backend/src/modules/ai/providers/extract-html-document.ts)) defends against model disobedience in three steps: happy path (pure HTML), markdown fence fallback, preamble fallback. Tested via `extract-html-document.spec.ts`.
+The LLM output goes through two sequential defenses in `OpenRouterAiProvider.generate()`:
+
+1. **`extractHtmlDocument`** ([apps/backend/src/modules/ai/providers/utils/extract-html-document.ts](apps/backend/src/modules/ai/providers/utils/extract-html-document.ts)) — structural validation: happy path (pure HTML), markdown fence fallback, preamble fallback. Throws if no valid HTML document is found.
+
+2. **`sanitizeRemoteUrls`** ([apps/backend/src/modules/ai/providers/utils/sanitize-remote-urls.ts](apps/backend/src/modules/ai/providers/utils/sanitize-remote-urls.ts)) — URL allowlist enforcement: replaces any absolute URL whose host is not in `ALLOWED_IMAGE_HOSTS` (`picsum.photos`, `placehold.co`) with `FALLBACK_PLACEHOLDER` (`https://placehold.co/600x400?text=Image`). Uses a single regex over the raw HTML string so it catches URLs in `src`, `srcset`, `href`, inline CSS `url(...)`, and JS strings alike. Logs a warning when replacements occur. Tested via `sanitize-remote-urls.spec.ts`.
 
 ## API surface
 

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AiProvider } from '../ai.provider';
 import { AiGenerateInput, AiGenerateOutput } from '../types/ai.types';
 import { extractHtmlDocument } from './utils/extract-html-document';
+import { sanitizeRemoteUrls } from './utils/sanitize-remote-urls';
 import { SYSTEM_PROMPT } from '../prompts/system-prompt';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -96,6 +97,12 @@ export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
       this.logger.error('Could not extract HTML from model output', raw.slice(0, 300));
       throw new InternalServerErrorException('AI provider did not return a valid HTML document');
     }
+
+    const sanitized = sanitizeRemoteUrls(code);
+    if (sanitized.replacedCount > 0) {
+      this.logger.warn(`Sanitizer replaced ${sanitized.replacedCount} non-allowed URL(s) with placeholders`);
+    }
+    code = sanitized.html;
 
     const isFirstTurn = !input.currentCode;
     const assistantMessage = isFirstTurn
