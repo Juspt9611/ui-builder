@@ -97,8 +97,7 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
 
         {/* Right panel: output */}
         <div className="flex flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
-            <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Output</h2>
+          <div className="flex items-center justify-start border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
             <div className="inline-flex rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
               {(['preview', 'code'] as PreviewTab[]).map((tab) => (
                 <button
