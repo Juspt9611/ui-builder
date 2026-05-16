@@ -6,6 +6,9 @@ import { addMessage } from '@/services/chats';
 import ChatMessages from './ChatMessages';
 import ChatComposer from './ChatComposer';
 import CodePreview from './CodePreview';
+import CodeViewer from './CodeViewer';
+
+type PreviewTab = 'preview' | 'code';
 
 interface ChatWorkspaceProps {
   initialChat: Chat;
@@ -14,6 +17,7 @@ interface ChatWorkspaceProps {
 export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
   const [chat, setChat] = useState<Chat>(initialChat);
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<PreviewTab>('preview');
 
   const handleSend = async (content: string) => {
     setIsLoading(true);
@@ -24,6 +28,9 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
       setIsLoading(false);
     }
   };
+
+  const previewCode =
+    [...chat.messages].reverse().find((m) => m.role === 'user' && m.code)?.code ?? '';
 
   return (
     <div className="flex h-full w-full">
@@ -36,13 +43,33 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
         <ChatComposer onSend={handleSend} isLoading={isLoading} />
       </div>
 
-      {/* Right panel: preview */}
+      {/* Right panel: output */}
       <div className="flex flex-1 flex-col">
-        <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
-          <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Preview</h2>
+        <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
+          <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Output</h2>
+          <div className="inline-flex rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
+            {(['preview', 'code'] as PreviewTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={[
+                  'rounded px-3 py-1 text-xs font-medium capitalize transition-colors',
+                  activeTab === tab
+                    ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
+                    : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
+                ].join(' ')}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex-1">
-          <CodePreview code={[...chat.messages].reverse().find((m) => m.role === 'user' && m.code)?.code ?? ''} />
+        <div className="relative flex-1 overflow-hidden">
+          {activeTab === 'preview' ? (
+            <CodePreview code={previewCode} />
+          ) : (
+            <CodeViewer code={previewCode} />
+          )}
         </div>
       </div>
     </div>

@@ -55,7 +55,8 @@ ui-builder/
 │       │           ├── ChatMessages.tsx
 │       │           ├── ChatComposer.tsx
 │       │           ├── MessageBubble.tsx
-│       │           └── CodePreview.tsx       # iframe sandbox preview (with empty state)
+│       │           ├── CodePreview.tsx       # iframe sandbox preview (with empty state)
+│       │           └── CodeViewer.tsx        # read-only HTML viewer with syntax highlighting + copy-to-clipboard
 │       ├── components/
 │       │   └── PromptForm.tsx
 │       ├── services/
@@ -88,6 +89,7 @@ ui-builder/
 | Frontend styling | Tailwind CSS v4 via `@tailwindcss/postcss` |
 | Frontend HTTP | Native `fetch` via `services/http.ts` (no axios/swr/react-query) |
 | Frontend state | Plain `useState` (no Zustand/Redux) |
+| Frontend syntax highlighting | `highlight.js` (core + `xml` language only, ~30–50 KB) |
 | Package manager | pnpm workspaces |
 | Linting | ESLint 9 flat config (each app independently) |
 | Formatting | Prettier 3 (backend only) |
@@ -247,7 +249,9 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **Route-scoped components**: components used only by a single route can be co-located inside that route's folder (e.g. `app/chat/components/`). These are not route segments — no `page.tsx`/`layout.tsx` — just a colocation folder.
 - **Data fetching**: server components fetch with `cache: 'no-store'`. All fetch calls go through the shared wrapper in [apps/frontend/services/http.ts](apps/frontend/services/http.ts), which injects JSON headers and throws on non-OK responses.
 - **Tailwind v4**: configured via PostCSS in [apps/frontend/postcss.config.mjs](apps/frontend/postcss.config.mjs). Theme tokens are defined in [apps/frontend/app/globals.css](apps/frontend/app/globals.css) using `@theme inline`.
+- **Output panel tabs**: `ChatWorkspace` renders a segmented control (Preview / Code) in the right panel header. The active tab state (`useState<'preview' | 'code'>`) switches between `CodePreview` (iframe) and `CodeViewer` (syntax-highlighted HTML). The panel wrapper uses `position: relative` so both components can use `absolute inset-0` to fill it reliably without percentage-height quirks in flex contexts.
 - **iframe preview**: generated HTML is rendered inside a sandboxed `<iframe srcDoc={code} sandbox="allow-scripts">` in `CodePreview.tsx`. When `code` is empty, a placeholder "Your application will appear here" is shown instead of a blank iframe. The AI layer always returns a full self-contained HTML document, so no bundling step is needed. `ChatWorkspace` derives the code to display from the last user `Message` that carries a `code` field (`[...chat.messages].reverse().find(m => m.role === 'user' && m.code)?.code`).
+- **Code viewer**: `CodeViewer.tsx` renders the generated HTML with `highlight.js` (core build + `xml` language registered as `html`). Highlighting is computed in `useMemo` and injected via `dangerouslySetInnerHTML` — safe because `hljs.highlight()` escapes the output. A "Copy" button in the component header uses `navigator.clipboard.writeText` with a transient "Copied!" state (1.5 s timeout, cleaned up on unmount). The `github-dark` theme is imported globally in `globals.css`.
 - **UI copy language**: English.
 
 ## Entry points
@@ -290,7 +294,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 
 ## Intended direction
 
-Phases 1 (scaffolding), 2 (real AI integration), and 3 (edit flow with code-as-context) are complete. Remaining next steps:
+Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), and 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard) are complete. Remaining next steps:
 
 1. **Streaming**: stream the LLM response token-by-token via SSE or chunked transfer to improve perceived latency.
 2. **Persistence**: replace `ChatsRepository`'s in-memory `Map` with a real database so chat history survives restarts.
