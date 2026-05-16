@@ -32,7 +32,7 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
         <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
           <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Conversation</h2>
         </div>
-        <ChatMessages messages={chat.messages} />
+        <ChatMessages messages={chat.messages} isLoading={isLoading} />
         <ChatComposer onSend={handleSend} isLoading={isLoading} />
       </div>
 
@@ -42,7 +42,7 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
           <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Preview</h2>
         </div>
         <div className="flex-1">
-          <CodePreview code={chat.code} />
+          <CodePreview code={[...chat.messages].reverse().find((m) => m.role === 'user' && m.code)?.code ?? ''} />
         </div>
       </div>
     </div>

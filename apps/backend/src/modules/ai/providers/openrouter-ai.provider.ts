@@ -46,10 +46,15 @@ export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
   async generate(input: AiGenerateInput): Promise<AiGenerateOutput> {
     const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
 
-    if (input.history) {
-      for (const entry of input.history) {
-        messages.push({ role: entry.role, content: entry.content });
-      }
+    if (input.currentCode) {
+      messages.push({
+        role: 'user',
+        content:
+          'This is the current version of the application. Use it as the base for the requested change and return the full updated document.\n\n' +
+          '<current_app>\n' +
+          input.currentCode +
+          '\n</current_app>',
+      });
     }
 
     messages.push({ role: 'user', content: input.prompt });
@@ -92,7 +97,7 @@ export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
       throw new InternalServerErrorException('AI provider did not return a valid HTML document');
     }
 
-    const isFirstTurn = !input.history || input.history.length === 0;
+    const isFirstTurn = !input.currentCode;
     const assistantMessage = isFirstTurn
       ? "Here's your application. Send another instruction to refine it."
       : 'Updated your application with the latest changes.';

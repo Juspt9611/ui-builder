@@ -4,13 +4,13 @@ export interface Message {
   id: string;
   role: Role;
   content: string;
+  code?: string;
   createdAt: string;
 }
 
 export interface Chat {
   id: string;
   messages: Message[];
-  code: string;
   createdAt: string;
   updatedAt: string;
 }

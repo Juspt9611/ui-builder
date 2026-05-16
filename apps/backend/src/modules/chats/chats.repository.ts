@@ -20,11 +20,4 @@ export class ChatsRepository {
     chat.updatedAt = new Date().toISOString();
     return chat;
   }
-
-  updateCode(id: string, code: string): Chat {
-    const chat = this.store.get(id)!;
-    chat.code = code;
-    chat.updatedAt = new Date().toISOString();
-    return chat;
-  }
 }
