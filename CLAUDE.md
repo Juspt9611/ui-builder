@@ -56,7 +56,9 @@ ui-builder/
 │       │           ├── ChatComposer.tsx
 │       │           ├── MessageBubble.tsx
 │       │           ├── CodePreview.tsx       # iframe sandbox preview (with empty state)
-│       │           └── CodeViewer.tsx        # read-only HTML viewer with syntax highlighting + copy-to-clipboard
+│       │           ├── CodeViewer.tsx        # read-only HTML viewer with syntax highlighting + copy-to-clipboard
+│       │           ├── Timestamp.tsx         # client component; formats message.createdAt in browser timezone via Intl.DateTimeFormat
+│       │           └── TruncationConfirmModal.tsx  # confirmation modal shown before discarding later versions on a rollback edit
 │       ├── components/
 │       │   └── PromptForm.tsx
 │       ├── services/
@@ -200,7 +202,11 @@ There are two representations:
 |---|---|---|---|
 | `POST` | `/chats` | `{ prompt: string }` (max 4000 chars) | Create chat, trigger first AI generation |
 | `GET` | `/chats/:id` | — | Fetch chat by id |
-| `POST` | `/chats/:id/messages` | `{ content: string }` (max 4000 chars) | Append user message, trigger AI generation, return updated chat |
+| `POST` | `/chats/:id/messages` | `{ content: string, fromMessageId?: string }` (content max 4000 chars) | Append user message, trigger AI generation, return updated chat. When `fromMessageId` is provided, all messages stored after that user message are discarded and its `code` is used as `currentCode` for the LLM (version rollback). |
+
+#### `fromMessageId` rollback semantics
+
+`fromMessageId` must be the `id` of a persisted **user** message (the stable entity id). The assistant message ids in the HTTP response DTO are regenerated on every read and must not be used as rollback references. `ChatsService.addMessage` resolves the anchor, truncates via `ChatsRepository.truncateAfter`, then appends the new user message normally. If `fromMessageId` points to the last stored message no truncation occurs — the call degrades to a normal append.
 
 ## Per-app scripts
 
@@ -250,8 +256,10 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **Data fetching**: server components fetch with `cache: 'no-store'`. All fetch calls go through the shared wrapper in [apps/frontend/services/http.ts](apps/frontend/services/http.ts), which injects JSON headers and throws on non-OK responses.
 - **Tailwind v4**: configured via PostCSS in [apps/frontend/postcss.config.mjs](apps/frontend/postcss.config.mjs). Theme tokens are defined in [apps/frontend/app/globals.css](apps/frontend/app/globals.css) using `@theme inline`.
 - **Output panel tabs**: `ChatWorkspace` renders a segmented control (Preview / Code) in the right panel header. The active tab state (`useState<'preview' | 'code'>`) switches between `CodePreview` (iframe) and `CodeViewer` (syntax-highlighted HTML). The panel wrapper uses `position: relative` so both components can use `absolute inset-0` to fill it reliably without percentage-height quirks in flex contexts.
-- **iframe preview**: generated HTML is rendered inside a sandboxed `<iframe srcDoc={code} sandbox="allow-scripts">` in `CodePreview.tsx`. When `code` is empty, a placeholder "Your application will appear here" is shown instead of a blank iframe. The AI layer always returns a full self-contained HTML document, so no bundling step is needed. `ChatWorkspace` derives the code to display from the last user `Message` that carries a `code` field (`[...chat.messages].reverse().find(m => m.role === 'user' && m.code)?.code`).
+- **iframe preview**: generated HTML is rendered inside a sandboxed `<iframe srcDoc={code} sandbox="allow-scripts">` in `CodePreview.tsx`. When `code` is empty, a placeholder "Your application will appear here" is shown instead of a blank iframe. The AI layer always returns a full self-contained HTML document, so no bundling step is needed.
 - **Code viewer**: `CodeViewer.tsx` renders the generated HTML with `highlight.js` (core build + `xml` language registered as `html`). Highlighting is computed in `useMemo` and injected via `dangerouslySetInnerHTML` — safe because `hljs.highlight()` escapes the output. A "Copy" button in the component header uses `navigator.clipboard.writeText` with a transient "Copied!" state (1.5 s timeout, cleaned up on unmount). The `github-dark` theme is imported globally in `globals.css`.
+- **Version history mode**: `ChatWorkspace` keeps `selectedUserMessageId: string | null` state. When set, `previewCode` resolves to that user message's `code`; when null it falls back to the last user message with code (default). Each assistant bubble renders a "View this version / Viewing this version" button (with an eye icon) that toggles the selection — clicking a selected bubble deselects it. Bubbles whose version index is greater than the selected one are rendered at `opacity-40` to signal they will be discarded if the user edits. On send, `ChatWorkspace.handleSend` detects editing-on-older-version and opens `TruncationConfirmModal` showing the discard count before proceeding. On confirmation it calls `addMessage` with `fromMessageId`, receives the truncated chat, sets state, and clears the selection so the panel jumps to the newly generated version. No explicit refetch is needed — the POST response always returns the full (post-truncation) chat.
+- **Message timestamps**: `Timestamp.tsx` is a client component that mounts the formatted date in a `useEffect` (avoiding SSR/hydration timezone mismatch) using `Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })`, which picks the browser's local timezone automatically. It renders with `suppressHydrationWarning`. `MessageBubble` renders a `<Timestamp>` above every bubble, aligned to the bubble's side.
 - **UI copy language**: English.
 
 ## Entry points
@@ -294,7 +302,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 
 ## Intended direction
 
-Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), and 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard) are complete. Remaining next steps:
+Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), and 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal) are complete. Remaining next steps:
 
 1. **Streaming**: stream the LLM response token-by-token via SSE or chunked transfer to improve perceived latency.
 2. **Persistence**: replace `ChatsRepository`'s in-memory `Map` with a real database so chat history survives restarts.
