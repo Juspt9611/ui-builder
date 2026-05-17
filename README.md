@@ -105,7 +105,7 @@ Run from the repo root with `pnpm --filter <app> <script>`, or from inside the a
 | `start` | Serve production build |
 | `lint` | ESLint via `eslint-config-next` |
 
-> **Note:** The root `pnpm test` is a placeholder and always exits 1. Run tests per-app: `pnpm --filter backend test` or `pnpm --filter backend test:e2e`.
+> **Note:** From the repo root, `pnpm test` runs the backend unit tests (delegates to `pnpm --filter backend test`). For e2e tests or coverage, use `pnpm --filter backend test:e2e` or `pnpm --filter backend test:cov`.
 
 ---
 

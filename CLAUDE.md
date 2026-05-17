@@ -322,7 +322,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 ## Known caveats
 
 - **Nested git repo (resolved)**: `apps/backend/` previously had its own `.git/` directory. It has been removed — the outer monorepo now tracks all backend files directly.
-- **Root `pnpm test` is a placeholder** — it always exits 1. Run tests per-app: `pnpm --filter backend test` or `pnpm --filter backend test:e2e`.
+- **Root `pnpm test` delegates to backend unit tests** — runs `pnpm --filter backend test` under the hood. For e2e or coverage, use `pnpm --filter backend test:e2e` / `test:cov` explicitly.
 - **`ChatsRepository` is in-memory** — all chat state lives in a `Map` and is lost when the backend restarts. A persistent store (DB) is a future concern.
 - **No streaming** — endpoints return a full chat snapshot after the AI call completes. Generation can take 5–20 seconds depending on the model. Streaming (SSE or chunked) is a future improvement.
 - **Missing shared configs**: no root `tsconfig.base.json`, no shared ESLint config, no root `.prettierrc`, no Dockerfile, no CI configuration. These should be introduced as the POC grows.
