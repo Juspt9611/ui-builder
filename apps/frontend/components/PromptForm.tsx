@@ -3,7 +3,7 @@
 import { useState, KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { createChat } from '@/services/chats';
-import { ApiErrorCode } from '@/services/errors';
+import { ApiErrorCode, UNPROCESSABLE_PROMPT_MESSAGE } from '@/services/errors';
 
 export default function PromptForm() {
   const router = useRouter();
@@ -23,8 +23,11 @@ export default function PromptForm() {
       router.push(`/chat/${chat.id}`);
     } catch (err) {
       const e = err as Error & { errorCode?: string };
-      const message = e.message || 'Something went wrong. Please try again.';
-      const tone = e.errorCode === ApiErrorCode.UNPROCESSABLE_PROMPT ? 'warning' : 'error';
+      const isUnprocessable = e.errorCode === ApiErrorCode.UNPROCESSABLE_PROMPT;
+      const message = isUnprocessable
+        ? UNPROCESSABLE_PROMPT_MESSAGE
+        : e.message || 'Something went wrong. Please try again.';
+      const tone = isUnprocessable ? 'warning' : 'error';
       setError({ message, tone });
       setIsLoading(false);
     }

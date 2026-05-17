@@ -11,7 +11,7 @@ import PreviewSkeleton from './PreviewSkeleton';
 import CodeSkeleton from './CodeSkeleton';
 import TruncationConfirmModal from './TruncationConfirmModal';
 import ErrorBanner from './ErrorBanner';
-import { ApiErrorCode } from '@/services/errors';
+import { ApiErrorCode, UNPROCESSABLE_PROMPT_MESSAGE } from '@/services/errors';
 
 type PreviewTab = 'preview' | 'code';
 
@@ -52,7 +52,7 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
     } catch (err) {
       const e = err as Error & { errorCode?: string };
       if (e.errorCode === ApiErrorCode.UNPROCESSABLE_PROMPT) {
-        setBanner({ message: e.message, tone: 'warning' });
+        setBanner({ message: UNPROCESSABLE_PROMPT_MESSAGE, tone: 'warning' });
       } else {
         setBanner({ message: 'Something went wrong. Please try again.', tone: 'error' });
       }
