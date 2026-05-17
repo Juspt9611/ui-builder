@@ -8,6 +8,8 @@ import ChatComposer from './ChatComposer';
 import CodePreview from './CodePreview';
 import CodeViewer from './CodeViewer';
 import TruncationConfirmModal from './TruncationConfirmModal';
+import ErrorBanner from './ErrorBanner';
+import { ApiErrorCode } from '@/services/errors';
 
 type PreviewTab = 'preview' | 'code';
 
@@ -21,12 +23,15 @@ interface ChatWorkspaceProps {
   initialChat: Chat;
 }
 
+type BannerState = { message: string; tone: 'warning' | 'error' };
+
 export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
   const [chat, setChat] = useState<Chat>(initialChat);
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<PreviewTab>('preview');
   const [selectedUserMessageId, setSelectedUserMessageId] = useState<string | null>(null);
   const [pendingTruncation, setPendingTruncation] = useState<PendingTruncation | null>(null);
+  const [banner, setBanner] = useState<BannerState | null>(null);
 
   const userMessages = chat.messages.filter((m) => m.role === 'user');
   const lastUserMessageId = userMessages.at(-1)?.id ?? null;
@@ -37,10 +42,19 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
 
   const sendMessage = async (content: string, fromMessageId?: string) => {
     setIsLoading(true);
+    setBanner(null);
     try {
       const updated = await addMessage(chat.id, content, fromMessageId);
       setChat(updated);
       setSelectedUserMessageId(null);
+    } catch (err) {
+      const e = err as Error & { errorCode?: string };
+      if (e.errorCode === ApiErrorCode.UNPROCESSABLE_PROMPT) {
+        setBanner({ message: e.message, tone: 'warning' });
+      } else {
+        setBanner({ message: 'Something went wrong. Please try again.', tone: 'error' });
+      }
+      throw err;
     } finally {
       setIsLoading(false);
     }
@@ -92,6 +106,13 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
             selectedUserMessageId={selectedUserMessageId}
             onSelectVersion={handleSelectVersion}
           />
+          {banner && (
+            <ErrorBanner
+              message={banner.message}
+              tone={banner.tone}
+              onDismiss={() => setBanner(null)}
+            />
+          )}
           <ChatComposer onSend={handleSend} isLoading={isLoading} />
         </div>
 

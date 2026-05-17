@@ -5,6 +5,7 @@ import { AiGenerateInput, AiGenerateOutput } from '../types/ai.types';
 import { extractHtmlDocument } from './utils/extract-html-document';
 import { sanitizeRemoteUrls } from './utils/sanitize-remote-urls';
 import { SYSTEM_PROMPT } from '../prompts/system-prompt';
+import { CANNOT_INTERPRET_SENTINEL, UnprocessablePromptException } from '../errors/unprocessable-prompt.exception';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -88,6 +89,13 @@ export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
     const raw = body.choices?.[0]?.message?.content;
     if (!raw) {
       throw new InternalServerErrorException('AI provider returned an empty response');
+    }
+
+    const sentinelMatch = raw.trim().match(new RegExp(`^${CANNOT_INTERPRET_SENTINEL}:\\s*(.*)$`));
+    if (sentinelMatch) {
+      const reason = sentinelMatch[1].trim() || 'The model could not interpret the prompt.';
+      this.logger.warn(`Model returned CANNOT_INTERPRET sentinel: ${reason}`);
+      throw new UnprocessablePromptException(reason);
     }
 
     let code: string;

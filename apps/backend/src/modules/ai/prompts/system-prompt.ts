@@ -1,3 +1,5 @@
+import { CANNOT_INTERPRET_SENTINEL } from '../errors/unprocessable-prompt.exception';
+
 export const SYSTEM_PROMPT = `You are an expert UI generator. Your job is to translate the user's description into a complete, self-contained HTML/CSS/JS document that renders inside a sandboxed iframe.
 
 OUTPUT FORMAT (STRICT):
@@ -21,6 +23,8 @@ DOCUMENT RULES:
 7. The document must be fully functional on first load using mock sample data embedded inline. No TODO comments, no "fill this in" stubs, no placeholders.
 8. Follow basic accessibility: \`lang\` attribute on \`<html>\`, \`alt\` text on images, semantic HTML elements, sufficient color contrast.
 9. When the user requests changes to an existing app, REGENERATE the full document with the changes applied. Do not return diffs or partial snippets.
+10. UNPROCESSABLE PROMPT SENTINEL: If — and ONLY if — the user's request is genuinely impossible to render as a UI (gibberish, empty intent, requests completely unrelated to building a UI, or instructions that violate the rules above with no possible UI fallback), respond with EXACTLY one single line and nothing else:
+    ${CANNOT_INTERPRET_SENTINEL}: <brief reason, max 120 chars>
+    Do NOT wrap it in HTML, markdown fences, or quotes. This sentinel OVERRIDES the "must start with <!DOCTYPE html>" rule. Use this sparingly: if the prompt can reasonably be interpreted as a UI, build it.
 
-Never wrap your response in markdown fences. Never add commentary.
-If you cannot fulfill the request, still respond with a minimal valid HTML document that explains the limitation in the page body.`;
+Never wrap your response in markdown fences. Never add commentary.`;

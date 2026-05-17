@@ -3,12 +3,13 @@
 import { useState, KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { createChat } from '@/services/chats';
+import { ApiErrorCode } from '@/services/errors';
 
 export default function PromptForm() {
   const router = useRouter();
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; tone: 'warning' | 'error' } | null>(null);
 
   const handleSubmit = async () => {
     const trimmed = prompt.trim();
@@ -21,7 +22,10 @@ export default function PromptForm() {
       const chat = await createChat(trimmed);
       router.push(`/chat/${chat.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      const e = err as Error & { errorCode?: string };
+      const message = e.message || 'Something went wrong. Please try again.';
+      const tone = e.errorCode === ApiErrorCode.UNPROCESSABLE_PROMPT ? 'warning' : 'error';
+      setError({ message, tone });
       setIsLoading(false);
     }
   };
@@ -46,7 +50,9 @@ export default function PromptForm() {
       />
 
       {error && (
-        <p className="text-sm text-red-500">{error}</p>
+        <p className={`text-sm ${error.tone === 'warning' ? 'text-amber-600' : 'text-red-500'}`}>
+          {error.message}
+        </p>
       )}
 
       <button

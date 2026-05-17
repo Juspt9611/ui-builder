@@ -17,9 +17,13 @@ ui-builder/
 │   │   │       ├── ai/
 │   │   │       │   ├── ai.module.ts          # dynamic module (forRoot()); registers only the chosen provider via useFactory+ConfigService
 │   │   │       │   ├── ai.provider.ts        # abstract AiProvider
+│   │   │       │   ├── errors/
+│   │   │       │   │   └── unprocessable-prompt.exception.ts  # HTTP 422; exports CANNOT_INTERPRET_SENTINEL
 │   │   │       │   ├── providers/
 │   │   │       │   │   ├── mock-ai.provider.ts
+│   │   │       │   │   ├── mock-ai.provider.spec.ts
 │   │   │       │   │   ├── openrouter-ai.provider.ts   # real LLM via fetch
+│   │   │       │   │   ├── openrouter-ai.provider.spec.ts
 │   │   │       │   │   └── utils/
 │   │   │       │   │       └── extract-html-document.ts  # sanity extractor for LLM output
 │   │   │       │   ├── prompts/
@@ -58,12 +62,14 @@ ui-builder/
 │       │           ├── CodePreview.tsx       # iframe sandbox preview (with empty state)
 │       │           ├── CodeViewer.tsx        # read-only HTML viewer with syntax highlighting + copy-to-clipboard
 │       │           ├── Timestamp.tsx         # client component; formats message.createdAt in browser timezone via Intl.DateTimeFormat
-│       │           └── TruncationConfirmModal.tsx  # confirmation modal shown before discarding later versions on a rollback edit
+│       │           ├── TruncationConfirmModal.tsx  # confirmation modal shown before discarding later versions on a rollback edit
+│       │           └── ErrorBanner.tsx       # ephemeral warning/error banner shown above ChatComposer; auto-dismisses after 6 s
 │       ├── components/
 │       │   └── PromptForm.tsx
 │       ├── services/
 │       │   ├── chats.ts
 │       │   ├── config.ts
+│       │   ├── errors.ts                     # ApiErrorCode const object (UNPROCESSABLE_PROMPT); shared across components
 │       │   └── http.ts
 │       ├── types/
 │       │   └── chat.ts
@@ -117,7 +123,7 @@ The AI layer is controlled by `AI_PROVIDER` in `.env`. `AiModule` is a dynamic m
 
 | `AI_PROVIDER` | Provider | Behavior |
 |---|---|---|
-| `mock` (default) | `MockAiProvider` | Returns hardcoded "Hello World" HTML, ignores prompt |
+| `mock` (default) | `MockAiProvider` | Returns hardcoded "Hello World" HTML. Throws `UnprocessablePromptException` (422) if prompt contains `__cannot__` — useful for testing the error UX without OpenRouter. |
 | `openrouter` | `OpenRouterAiProvider` | Calls OpenRouter REST API, returns real LLM-generated HTML |
 
 ### Switching to OpenRouter
@@ -148,14 +154,17 @@ The base prompt is in [apps/backend/src/modules/ai/prompts/system-prompt.ts](app
 - **No tracking code** (Google Analytics, GTM, pixels, beacons).
 - Static mock data embedded inline; no TODOs or placeholders.
 - On follow-ups: regenerate the full document with changes applied, never return diffs.
+- **Unprocessable sentinel**: if the request is genuinely impossible to render as a UI (gibberish, empty intent, completely off-topic), the LLM must respond with exactly one line `CANNOT_INTERPRET: <reason>` and nothing else. This overrides the `<!DOCTYPE html>` rule. The sentinel string is defined as `CANNOT_INTERPRET_SENTINEL` in [apps/backend/src/modules/ai/errors/unprocessable-prompt.exception.ts](apps/backend/src/modules/ai/errors/unprocessable-prompt.exception.ts) and interpolated into the prompt at build time.
 
 ### HTML extraction and sanitization
 
-The LLM output goes through two sequential defenses in `OpenRouterAiProvider.generate()`:
+The LLM output goes through three sequential defenses in `OpenRouterAiProvider.generate()`:
 
-1. **`extractHtmlDocument`** ([apps/backend/src/modules/ai/providers/utils/extract-html-document.ts](apps/backend/src/modules/ai/providers/utils/extract-html-document.ts)) — structural validation: happy path (pure HTML), markdown fence fallback, preamble fallback. Throws if no valid HTML document is found.
+1. **Sentinel check** — before any HTML validation, the raw response is matched against `/^CANNOT_INTERPRET:\s*(.*)$/`. If matched, `UnprocessablePromptException` (HTTP 422) is thrown immediately and no code is stored. This must happen before `extractHtmlDocument` so it is not mistaken for a malformed HTML response.
 
-2. **`sanitizeRemoteUrls`** ([apps/backend/src/modules/ai/providers/utils/sanitize-remote-urls.ts](apps/backend/src/modules/ai/providers/utils/sanitize-remote-urls.ts)) — URL allowlist enforcement: replaces any absolute URL whose host is not in `ALLOWED_IMAGE_HOSTS` (`picsum.photos`, `placehold.co`) with `FALLBACK_PLACEHOLDER` (`https://placehold.co/600x400?text=Image`). Uses a single regex over the raw HTML string so it catches URLs in `src`, `srcset`, `href`, inline CSS `url(...)`, and JS strings alike. Logs a warning when replacements occur. Tested via `sanitize-remote-urls.spec.ts`.
+2. **`extractHtmlDocument`** ([apps/backend/src/modules/ai/providers/utils/extract-html-document.ts](apps/backend/src/modules/ai/providers/utils/extract-html-document.ts)) — structural validation: happy path (pure HTML), markdown fence fallback, preamble fallback. Throws if no valid HTML document is found.
+
+3. **`sanitizeRemoteUrls`** ([apps/backend/src/modules/ai/providers/utils/sanitize-remote-urls.ts](apps/backend/src/modules/ai/providers/utils/sanitize-remote-urls.ts)) — URL allowlist enforcement: replaces any absolute URL whose host is not in `ALLOWED_IMAGE_HOSTS` (`picsum.photos`, `placehold.co`) with `FALLBACK_PLACEHOLDER` (`https://placehold.co/600x400?text=Image`). Uses a single regex over the raw HTML string so it catches URLs in `src`, `srcset`, `href`, inline CSS `url(...)`, and JS strings alike. Logs a warning when replacements occur. Tested via `sanitize-remote-urls.spec.ts`.
 
 ## API surface
 
@@ -206,7 +215,18 @@ There are two representations:
 
 #### `fromMessageId` rollback semantics
 
-`fromMessageId` must be the `id` of a persisted **user** message (the stable entity id). The assistant message ids in the HTTP response DTO are regenerated on every read and must not be used as rollback references. `ChatsService.addMessage` resolves the anchor, truncates via `ChatsRepository.truncateAfter`, then appends the new user message normally. If `fromMessageId` points to the last stored message no truncation occurs — the call degrades to a normal append.
+`fromMessageId` must be the `id` of a persisted **user** message (the stable entity id). The assistant message ids in the HTTP response DTO are regenerated on every read and must not be used as rollback references. `ChatsService.addMessage` resolves the anchor, calls `aiProvider.generate` first, and only if generation succeeds does it call `ChatsRepository.truncateAfter` followed by `appendMessage`. This ordering guarantees that a failed generation (including 422 from an unprocessable prompt) leaves the repository intact — no truncation without a new version to replace it. If `fromMessageId` points to the last stored message no truncation occurs — the call degrades to a normal append.
+
+#### Unprocessable prompt error contract
+
+When `AiProvider.generate` throws `UnprocessablePromptException`, the exception propagates through `ChatsService` (no catch) and is serialized by Nest's built-in exception filter as:
+
+```
+HTTP 422 Unprocessable Entity
+{ "errorCode": "UNPROCESSABLE_PROMPT", "message": "<reason from the model>" }
+```
+
+Nothing is persisted. The frontend detects this via `err.errorCode === ApiErrorCode.UNPROCESSABLE_PROMPT` (see `services/errors.ts`) and shows a warning banner without adding a bubble or changing the preview.
 
 ## Per-app scripts
 
@@ -253,13 +273,15 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **Path alias**: `@/*` resolves to the project root (`apps/frontend/`) — configured in [apps/frontend/tsconfig.json](apps/frontend/tsconfig.json). Use `@/components/...`, `@/services/...`, `@/types/...`.
 - **App Router**: pages and layouts go under `apps/frontend/app/`. Shared UI components belong in `components/` (top-level, not inside `app/`); API client code in `services/`; shared types in `types/`.
 - **Route-scoped components**: components used only by a single route can be co-located inside that route's folder (e.g. `app/chat/components/`). These are not route segments — no `page.tsx`/`layout.tsx` — just a colocation folder.
-- **Data fetching**: server components fetch with `cache: 'no-store'`. All fetch calls go through the shared wrapper in [apps/frontend/services/http.ts](apps/frontend/services/http.ts), which injects JSON headers and throws on non-OK responses.
+- **Data fetching**: server components fetch with `cache: 'no-store'`. All fetch calls go through the shared wrapper in [apps/frontend/services/http.ts](apps/frontend/services/http.ts), which injects JSON headers and throws on non-OK responses. The thrown `Error` carries two extra properties: `status: number` (HTTP status code) and `errorCode?: string` (value from `body.errorCode` when present). Components use these to differentiate error types.
+- **API error codes**: shared string constants live in [apps/frontend/services/errors.ts](apps/frontend/services/errors.ts) as `ApiErrorCode` (`as const` object). Import from there — never compare against raw string literals like `'UNPROCESSABLE_PROMPT'`.
 - **Tailwind v4**: configured via PostCSS in [apps/frontend/postcss.config.mjs](apps/frontend/postcss.config.mjs). Theme tokens are defined in [apps/frontend/app/globals.css](apps/frontend/app/globals.css) using `@theme inline`.
 - **Output panel tabs**: `ChatWorkspace` renders a segmented control (Preview / Code) in the right panel header. The active tab state (`useState<'preview' | 'code'>`) switches between `CodePreview` (iframe) and `CodeViewer` (syntax-highlighted HTML). The panel wrapper uses `position: relative` so both components can use `absolute inset-0` to fill it reliably without percentage-height quirks in flex contexts.
 - **iframe preview**: generated HTML is rendered inside a sandboxed `<iframe srcDoc={code} sandbox="allow-scripts">` in `CodePreview.tsx`. When `code` is empty, a placeholder "Your application will appear here" is shown instead of a blank iframe. The AI layer always returns a full self-contained HTML document, so no bundling step is needed.
 - **Code viewer**: `CodeViewer.tsx` renders the generated HTML with `highlight.js` (core build + `xml` language registered as `html`). Highlighting is computed in `useMemo` and injected via `dangerouslySetInnerHTML` — safe because `hljs.highlight()` escapes the output. A "Copy" button in the component header uses `navigator.clipboard.writeText` with a transient "Copied!" state (1.5 s timeout, cleaned up on unmount). The `github-dark` theme is imported globally in `globals.css`.
 - **Version history mode**: `ChatWorkspace` keeps `selectedUserMessageId: string | null` state. When set, `previewCode` resolves to that user message's `code`; when null it falls back to the last user message with code (default). Each assistant bubble renders a "View this version / Viewing this version" button (with an eye icon) that toggles the selection — clicking a selected bubble deselects it. Bubbles whose version index is greater than the selected one are rendered at `opacity-40` to signal they will be discarded if the user edits. On send, `ChatWorkspace.handleSend` detects editing-on-older-version and opens `TruncationConfirmModal` showing the discard count before proceeding. On confirmation it calls `addMessage` with `fromMessageId`, receives the truncated chat, sets state, and clears the selection so the panel jumps to the newly generated version. No explicit refetch is needed — the POST response always returns the full (post-truncation) chat.
 - **Message timestamps**: `Timestamp.tsx` is a client component that mounts the formatted date in a `useEffect` (avoiding SSR/hydration timezone mismatch) using `Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })`, which picks the browser's local timezone automatically. It renders with `suppressHydrationWarning`. `MessageBubble` renders a `<Timestamp>` above every bubble, aligned to the bubble's side.
+- **Error feedback**: `ChatWorkspace.sendMessage` wraps the `addMessage` call in `try/catch/finally`. On catch it sets `banner` state (`BannerState = { message, tone: 'warning' | 'error' }`): tone `warning` for `UNPROCESSABLE_PROMPT`, tone `error` for everything else. The exception is re-thrown so `ChatComposer` can restore the user's text (optimistic clear + catch restore pattern). `ErrorBanner` renders above `ChatComposer` and auto-dismisses after 6 s. `PromptForm` applies the same logic for the home-page flow, showing the message inline with the appropriate color.
 - **UI copy language**: English.
 
 ## Entry points
@@ -299,12 +321,13 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **`ChatsRepository` is in-memory** — all chat state lives in a `Map` and is lost when the backend restarts. A persistent store (DB) is a future concern.
 - **No streaming** — endpoints return a full chat snapshot after the AI call completes. Generation can take 5–20 seconds depending on the model. Streaming (SSE or chunked) is a future improvement.
 - **Missing shared configs**: no root `tsconfig.base.json`, no shared ESLint config, no root `.prettierrc`, no Dockerfile, no CI configuration. These should be introduced as the POC grows.
+- **`Timestamp.tsx` ESLint warning** — the component calls `setState` synchronously inside `useEffect` (intentional SSR/hydration workaround). The `eslint-config-next` rule `react-hooks/set-state-in-effect` flags this as an error; the frontend `pnpm lint` fails because of this pre-existing issue. The warning is suppressed in the component with `// eslint-disable-next-line` if needed, or accepted as known tech debt.
+- **`uuid` v14 is ESM-only** — the e2e Jest config (`test/jest-e2e.json`) needs `"transformIgnorePatterns": ["node_modules/\\.pnpm/(?!(uuid))"]` to transform the uuid package through ts-jest. This is already set; do not remove it.
 
 ## Intended direction
 
-Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), and 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal) are complete. Remaining next steps:
+Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal), and 6 (unprocessable prompt handling — CANNOT_INTERPRET sentinel, HTTP 422, ephemeral error banner, generate-before-mutate ordering, `ApiErrorCode` constants) are complete. Remaining next steps:
 
 1. **Streaming**: stream the LLM response token-by-token via SSE or chunked transfer to improve perceived latency.
 2. **Persistence**: replace `ChatsRepository`'s in-memory `Map` with a real database so chat history survives restarts.
-3. **Error UX**: surface AI generation errors to the user in the frontend (currently swallowed in `ChatWorkspace`).
-4. **Dynamic assistant messages**: `AiProvider.generate()` already returns `assistantMessage` — wire it into the DTO mapper so the assistant bubble reflects actual LLM feedback instead of a canned string.
+3. **Dynamic assistant messages**: `AiProvider.generate()` already returns `assistantMessage` — wire it into the DTO mapper so the assistant bubble reflects actual LLM feedback instead of a canned string.

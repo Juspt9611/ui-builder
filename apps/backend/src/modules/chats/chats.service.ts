@@ -45,19 +45,23 @@ export class ChatsService {
     const chat = this.getChatEntity(id);
 
     let currentCode: string;
+    let anchorIndex = -1;
 
     if (fromMessageId) {
-      const anchorIndex = chat.messages.findIndex((m) => m.id === fromMessageId);
+      anchorIndex = chat.messages.findIndex((m) => m.id === fromMessageId);
       if (anchorIndex === -1) throw new NotFoundException(`Message ${fromMessageId} not found`);
       currentCode = chat.messages[anchorIndex].code;
-      if (anchorIndex < chat.messages.length - 1) {
-        this.chatsRepository.truncateAfter(id, fromMessageId);
-      }
     } else {
       currentCode = chat.messages.at(-1)?.code ?? '';
     }
 
+    // Generate first — if the LLM throws (e.g. UnprocessablePromptException), the
+    // repository is not mutated and the chat history stays intact.
     const { code } = await this.aiProvider.generate({ prompt: content, currentCode });
+
+    if (fromMessageId && anchorIndex < chat.messages.length - 1) {
+      this.chatsRepository.truncateAfter(id, fromMessageId);
+    }
 
     const userMessage: Message = {
       id: uuidv4(),

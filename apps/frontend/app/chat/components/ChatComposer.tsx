@@ -14,7 +14,11 @@ export default function ChatComposer({ onSend, isLoading }: ChatComposerProps) {
     const trimmed = content.trim();
     if (!trimmed || isLoading) return;
     setContent('');
-    await onSend(trimmed);
+    try {
+      await onSend(trimmed);
+    } catch {
+      setContent(trimmed);
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

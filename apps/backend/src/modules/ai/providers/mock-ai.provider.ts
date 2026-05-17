@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AiProvider } from '../ai.provider';
 import { AiGenerateInput, AiGenerateOutput } from '../types/ai.types';
+import { UnprocessablePromptException } from '../errors/unprocessable-prompt.exception';
 
 const MOCK_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -28,7 +29,10 @@ const MOCK_HTML = `<!DOCTYPE html>
 
 @Injectable()
 export class MockAiProvider implements AiProvider {
-  async generate(_input: AiGenerateInput): Promise<AiGenerateOutput> {
+  async generate(input: AiGenerateInput): Promise<AiGenerateOutput> {
+    if (input.prompt.includes('__cannot__')) {
+      throw new UnprocessablePromptException('Mock: prompt contained __cannot__ trigger.');
+    }
     return {
       code: MOCK_HTML,
       assistantMessage: 'Here is your application! You can continue refining it by sending more instructions.',
