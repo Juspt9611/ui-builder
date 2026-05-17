@@ -63,14 +63,17 @@ ui-builder/
 │       │           ├── CodeViewer.tsx        # read-only HTML viewer with syntax highlighting + copy-to-clipboard
 │       │           ├── Timestamp.tsx         # client component; formats message.createdAt in browser timezone via Intl.DateTimeFormat
 │       │           ├── TruncationConfirmModal.tsx  # confirmation modal shown before discarding later versions on a rollback edit
+│       │           ├── RegenerateConfirmModal.tsx  # confirmation modal shown before navigating home to start over
 │       │           └── ErrorBanner.tsx       # ephemeral warning/error banner shown above ChatComposer; auto-dismisses after 6 s
 │       ├── components/
 │       │   └── PromptForm.tsx
 │       ├── services/
 │       │   ├── chats.ts
-│       │   ├── config.ts
+│       │   ├── config.ts                     # getBackendUrl(); HTTP-related config only
 │       │   ├── errors.ts                     # ApiErrorCode const object (UNPROCESSABLE_PROMPT); shared across components
 │       │   └── http.ts
+│       ├── shared/
+│       │   └── storage-keys.ts               # client-side storage key constants (sessionStorage / localStorage)
 │       ├── types/
 │       │   └── chat.ts
 │       ├── public/
@@ -270,8 +273,9 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 ### Frontend
 
 - **No Prettier config** — linting only via `eslint-config-next/core-web-vitals` + `eslint-config-next/typescript`.
-- **Path alias**: `@/*` resolves to the project root (`apps/frontend/`) — configured in [apps/frontend/tsconfig.json](apps/frontend/tsconfig.json). Use `@/components/...`, `@/services/...`, `@/types/...`.
-- **App Router**: pages and layouts go under `apps/frontend/app/`. Shared UI components belong in `components/` (top-level, not inside `app/`); API client code in `services/`; shared types in `types/`.
+- **Path alias**: `@/*` resolves to the project root (`apps/frontend/`) — configured in [apps/frontend/tsconfig.json](apps/frontend/tsconfig.json). Use `@/components/...`, `@/services/...`, `@/types/...`, `@/shared/...`.
+- **App Router**: pages and layouts go under `apps/frontend/app/`. Shared UI components belong in `components/` (top-level, not inside `app/`); API client code in `services/`; shared types in `types/`; client-side non-HTTP constants (storage keys, etc.) in `shared/`.
+- **Storage keys**: all `sessionStorage`/`localStorage` key strings are centralised in [apps/frontend/shared/storage-keys.ts](apps/frontend/shared/storage-keys.ts). Do not inline key strings in components — import from there. Keep HTTP-related config (`getBackendUrl`) in `services/config.ts` and storage constants in `shared/storage-keys.ts`.
 - **Route-scoped components**: components used only by a single route can be co-located inside that route's folder (e.g. `app/chat/components/`). These are not route segments — no `page.tsx`/`layout.tsx` — just a colocation folder.
 - **Data fetching**: server components fetch with `cache: 'no-store'`. All fetch calls go through the shared wrapper in [apps/frontend/services/http.ts](apps/frontend/services/http.ts), which injects JSON headers and throws on non-OK responses. The thrown `Error` carries two extra properties: `status: number` (HTTP status code) and `errorCode?: string` (value from `body.errorCode` when present). Components use these to differentiate error types.
 - **API error codes**: shared string constants live in [apps/frontend/services/errors.ts](apps/frontend/services/errors.ts) as `ApiErrorCode` (`as const` object). Import from there — never compare against raw string literals like `'UNPROCESSABLE_PROMPT'`.
@@ -282,6 +286,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **Version history mode**: `ChatWorkspace` keeps `selectedUserMessageId: string | null` state. When set, `previewCode` resolves to that user message's `code`; when null it falls back to the last user message with code (default). Each assistant bubble renders a "View this version / Viewing this version" button (with an eye icon) that toggles the selection — clicking a selected bubble deselects it. Bubbles whose version index is greater than the selected one are rendered at `opacity-40` to signal they will be discarded if the user edits. On send, `ChatWorkspace.handleSend` detects editing-on-older-version and opens `TruncationConfirmModal` showing the discard count before proceeding. On confirmation it calls `addMessage` with `fromMessageId`, receives the truncated chat, sets state, and clears the selection so the panel jumps to the newly generated version. No explicit refetch is needed — the POST response always returns the full (post-truncation) chat.
 - **Message timestamps**: `Timestamp.tsx` is a client component that mounts the formatted date in a `useEffect` (avoiding SSR/hydration timezone mismatch) using `Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })`, which picks the browser's local timezone automatically. It renders with `suppressHydrationWarning`. `MessageBubble` renders a `<Timestamp>` above every bubble, aligned to the bubble's side.
 - **Error feedback**: `ChatWorkspace.sendMessage` wraps the `addMessage` call in `try/catch/finally`. On catch it sets `banner` state (`BannerState = { message, tone: 'warning' | 'error' }`): tone `warning` for `UNPROCESSABLE_PROMPT`, tone `error` for everything else. The exception is re-thrown so `ChatComposer` can restore the user's text (optimistic clear + catch restore pattern). `ErrorBanner` renders above `ChatComposer` and auto-dismisses after 6 s. `PromptForm` applies the same logic for the home-page flow, showing the message inline with the appropriate color.
+- **Regenerate (start over)**: a **Regenerate** button sits in the right panel header of `ChatWorkspace`, aligned to the right of the Preview/Code tabs. Clicking it opens `RegenerateConfirmModal`. On confirmation, the original prompt (`chat.messages.find(m => m.role === 'user')?.content`) is written to `sessionStorage` under `REGENERATE_PROMPT_STORAGE_KEY` (from `shared/storage-keys.ts`) and the router navigates to `/`. `PromptForm` reads and clears that key in a `useEffect` on mount, seeding the textarea. The existing chat is not mutated or deleted — it remains accessible at its original URL. The button is disabled while `isLoading` or when no user message exists.
 - **UI copy language**: English.
 
 ## Entry points
@@ -326,7 +331,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 
 ## Intended direction
 
-Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal), and 6 (unprocessable prompt handling — CANNOT_INTERPRET sentinel, HTTP 422, ephemeral error banner, generate-before-mutate ordering, `ApiErrorCode` constants) are complete. Remaining next steps:
+Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal), 6 (unprocessable prompt handling — CANNOT_INTERPRET sentinel, HTTP 422, ephemeral error banner, generate-before-mutate ordering, `ApiErrorCode` constants), and 7 (regenerate — start-over button, `RegenerateConfirmModal`, `sessionStorage` prompt transport, `shared/storage-keys.ts`) are complete. Remaining next steps:
 
 1. **Streaming**: stream the LLM response token-by-token via SSE or chunked transfer to improve perceived latency.
 2. **Persistence**: replace `ChatsRepository`'s in-memory `Map` with a real database so chat history survives restarts.

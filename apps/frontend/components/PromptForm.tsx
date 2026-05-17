@@ -1,13 +1,22 @@
 'use client';
 
-import { useState, KeyboardEvent } from 'react';
+import { useState, useEffect, KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { createChat } from '@/services/chats';
 import { ApiErrorCode, UNPROCESSABLE_PROMPT_MESSAGE } from '@/services/errors';
+import { REGENERATE_PROMPT_STORAGE_KEY } from '@/shared/storage-keys';
 
 export default function PromptForm() {
   const router = useRouter();
   const [prompt, setPrompt] = useState('');
+
+  useEffect(() => {
+    const seed = sessionStorage.getItem(REGENERATE_PROMPT_STORAGE_KEY);
+    if (seed) {
+      setPrompt(seed);
+      sessionStorage.removeItem(REGENERATE_PROMPT_STORAGE_KEY);
+    }
+  }, []);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<{ message: string; tone: 'warning' | 'error' } | null>(null);
 
