@@ -150,13 +150,13 @@ To switch to OpenRouter, set `AI_PROVIDER=openrouter` and supply `OPENROUTER_API
 
 - **Monorepo with pnpm workspaces** — a single `pnpm install` wires both apps; lint and tests remain isolated per app; the workspace boundary makes it easy to add a shared package later.
 
-- **Abstract `AiProvider` + dynamic `AiModule.forRoot()`** — `ChatsService` depends only on the abstract token; swapping mock → real LLM is a one-line env change with no consumer edits. Only the chosen provider is instantiated, avoiding accidental OpenRouter calls in test runs.
+- **Abstract `AiProvider` — Template Method pattern** — `AiProvider` owns the full generation pipeline via its non-abstract `generate()` method: it assembles the message array (system prompt + optional `<current_app>` context + user prompt), calls the abstract `callModel(messages)` hook, then runs sentinel detection, HTML extraction, and URL sanitization in a fixed sequence. Concrete providers (`OpenRouterAiProvider`, `MockAiProvider`) implement only `callModel` — they return the raw model text and nothing else. This means every future provider gets the app-level rules (sentinel, extraction, sanitization) for free, without re-implementing them. The module-level wiring uses `AiModule.forRoot()`, a dynamic NestJS module that reads `AI_PROVIDER` at DI resolution time — `ChatsService` depends only on the abstract token, and the unused provider is never instantiated.
 
 - **In-memory `ChatsRepository`** — deliberate POC trade-off. A `Map<string, Chat>` keeps the surface minimal and the project runnable without a database. Persistence is the clearest next step.
 
 - **Entity / DTO split** — the persistence entity (`chat.entity.ts`) stores only user turns (no `role` field). `ChatsService.toChatResponseDto()` fabricates the assistant counterpart on every read, so the HTTP shape is always a clean user/assistant pair without polluting the store.
 
-- **Three-layer LLM output hardening** — raw model output passes through: (1) a sentinel check (`CANNOT_INTERPRET: <reason>` → HTTP 422, nothing persisted), (2) `extractHtmlDocument` for structural validation (pure HTML, markdown-fence fallback, preamble fallback), and (3) `sanitizeRemoteUrls` which replaces any image URL not in the allowlist (`picsum.photos`, `placehold.co`) with a safe placeholder. This sequence is defensive against both bad prompts and inconsistent model output.
+- **Three-layer LLM output hardening** — the pipeline lives in `AiProvider.generate()` and runs for every provider automatically: (1) sentinel check (`CANNOT_INTERPRET: <reason>` → HTTP 422, nothing persisted), (2) `extractHtmlDocument` for structural validation (pure HTML, markdown-fence fallback, preamble fallback), and (3) `sanitizeRemoteUrls` which replaces any image URL not in the allowlist (`picsum.photos`, `placehold.co`) with a safe placeholder. Concrete providers only see this pipeline's output — they never need to implement it themselves.
 
 - **Generate-before-mutate for rollbacks** — when a user edits from an older version (`fromMessageId`), the AI call must succeed before `ChatsRepository.truncateAfter` runs. A 422 or any generation error leaves the repository untouched, preventing a lost-state scenario.
 
@@ -170,8 +170,8 @@ To switch to OpenRouter, set `AI_PROVIDER=openrouter` and supply `OPENROUTER_API
 
 1. **AI generation** — The LLM (or mock) is given a system prompt that mandates returning a single, complete `<!DOCTYPE html>` document with all CSS and JS inline. No external scripts, no CDN, no API calls from the page.
 
-2. **Backend hardening** — The raw model response is processed in sequence:
-   - **Sentinel check**: if the response starts with `CANNOT_INTERPRET: <reason>`, an `UnprocessablePromptException` (HTTP 422) is thrown immediately; nothing is stored.
+2. **Backend hardening** — `AiProvider.generate()` processes every raw model response through a fixed three-step pipeline shared by all concrete providers:
+   - **Sentinel check**: if the response matches `CANNOT_INTERPRET: <reason>`, an `UnprocessablePromptException` (HTTP 422) is thrown immediately; nothing is stored.
    - **`extractHtmlDocument`**: validates the response is a real HTML document; handles markdown fence and preamble edge cases from inconsistent models.
    - **`sanitizeRemoteUrls`**: scans the full HTML string with a single regex and replaces any absolute URL whose host is not `picsum.photos` or `placehold.co` with a safe placeholder.
 

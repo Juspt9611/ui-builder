@@ -1,18 +1,8 @@
 import { Injectable, InternalServerErrorException, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AiProvider } from '../ai.provider';
-import { AiGenerateInput, AiGenerateOutput } from '../types/ai.types';
-import { extractHtmlDocument } from './utils/extract-html-document';
-import { sanitizeRemoteUrls } from './utils/sanitize-remote-urls';
-import { SYSTEM_PROMPT } from '../prompts/system-prompt';
-import { CANNOT_INTERPRET_SENTINEL, UnprocessablePromptException } from '../errors/unprocessable-prompt.exception';
+import { AiProvider, ChatMessage } from '../ai.provider';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
 
 interface ChatCompletionResponse {
   choices: { message: { role: string; content: string } }[];
@@ -20,13 +10,14 @@ interface ChatCompletionResponse {
 }
 
 @Injectable()
-export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
-  private readonly logger = new Logger(OpenRouterAiProvider.name);
+export class OpenRouterAiProvider extends AiProvider implements OnModuleInit {
+  protected readonly logger = new Logger(OpenRouterAiProvider.name);
   private readonly apiKey: string;
   private readonly model: string;
   private readonly headers: Record<string, string>;
 
   constructor(private readonly config: ConfigService) {
+    super();
     this.apiKey = this.config.getOrThrow<string>('OPENROUTER_API_KEY');
     this.model = this.config.get<string>('OPENROUTER_MODEL', 'nvidia/nemotron-3-super-120b-a12b:free');
 
@@ -45,22 +36,7 @@ export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
     this.logger.log(`OpenRouter provider ready — model: ${this.model}`);
   }
 
-  async generate(input: AiGenerateInput): Promise<AiGenerateOutput> {
-    const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
-
-    if (input.currentCode) {
-      messages.push({
-        role: 'user',
-        content:
-          'This is the current version of the application. Use it as the base for the requested change and return the full updated document.\n\n' +
-          '<current_app>\n' +
-          input.currentCode +
-          '\n</current_app>',
-      });
-    }
-
-    messages.push({ role: 'user', content: input.prompt });
-
+  protected async callModel(messages: ChatMessage[]): Promise<string> {
     let response: Response;
     try {
       response = await fetch(OPENROUTER_URL, {
@@ -91,32 +67,6 @@ export class OpenRouterAiProvider implements AiProvider, OnModuleInit {
       throw new InternalServerErrorException('AI provider returned an empty response');
     }
 
-    const sentinelMatch = raw.trim().match(new RegExp(`^${CANNOT_INTERPRET_SENTINEL}:\\s*(.*)$`));
-    if (sentinelMatch) {
-      const reason = sentinelMatch[1].trim() || 'The model could not interpret the prompt.';
-      this.logger.warn(`Model returned CANNOT_INTERPRET sentinel: ${reason}`);
-      throw new UnprocessablePromptException(reason);
-    }
-
-    let code: string;
-    try {
-      code = extractHtmlDocument(raw);
-    } catch (err) {
-      this.logger.error('Could not extract HTML from model output', raw.slice(0, 300));
-      throw new InternalServerErrorException('AI provider did not return a valid HTML document');
-    }
-
-    const sanitized = sanitizeRemoteUrls(code);
-    if (sanitized.replacedCount > 0) {
-      this.logger.warn(`Sanitizer replaced ${sanitized.replacedCount} non-allowed URL(s) with placeholders`);
-    }
-    code = sanitized.html;
-
-    const isFirstTurn = !input.currentCode;
-    const assistantMessage = isFirstTurn
-      ? "Here's your application. Send another instruction to refine it."
-      : 'Updated your application with the latest changes.';
-
-    return { code, assistantMessage };
+    return raw;
   }
 }

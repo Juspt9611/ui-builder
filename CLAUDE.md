@@ -16,18 +16,20 @@ ui-builder/
 │   │   │   └── modules/
 │   │   │       ├── ai/
 │   │   │       │   ├── ai.module.ts          # dynamic module (forRoot()); registers only the chosen provider via useFactory+ConfigService
-│   │   │       │   ├── ai.provider.ts        # abstract AiProvider
+│   │   │       │   ├── ai.provider.ts        # Template Method base: generate() orchestrates the pipeline; exports ChatMessage interface
+│   │   │       │   ├── ai.provider.spec.ts   # unit tests for the abstract orchestration via a FakeProvider
 │   │   │       │   ├── errors/
 │   │   │       │   │   └── unprocessable-prompt.exception.ts  # HTTP 422; exports CANNOT_INTERPRET_SENTINEL
 │   │   │       │   ├── providers/
-│   │   │       │   │   ├── mock-ai.provider.ts
+│   │   │       │   │   ├── mock-ai.provider.ts          # implements callModel(); returns sentinel raw on __cannot__
 │   │   │       │   │   ├── mock-ai.provider.spec.ts
-│   │   │       │   │   ├── openrouter-ai.provider.ts   # real LLM via fetch
+│   │   │       │   │   ├── openrouter-ai.provider.ts    # implements callModel(); transport-only (fetch + response parse)
 │   │   │       │   │   ├── openrouter-ai.provider.spec.ts
 │   │   │       │   │   └── utils/
-│   │   │       │   │       └── extract-html-document.ts  # sanity extractor for LLM output
+│   │   │       │   │       ├── extract-html-document.ts   # structural validator for LLM output; called by AiProvider
+│   │   │       │   │       └── sanitize-remote-urls.ts    # URL allowlist enforcer; called by AiProvider
 │   │   │       │   ├── prompts/
-│   │   │       │   │   └── system-prompt.ts  # base system prompt for HTML generation
+│   │   │       │   │   └── system-prompt.ts  # base system prompt for HTML generation; injected by AiProvider.buildMessages()
 │   │   │       │   └── types/
 │   │   │       │       └── ai.types.ts
 │   │   │       └── chats/
@@ -126,8 +128,8 @@ The AI layer is controlled by `AI_PROVIDER` in `.env`. `AiModule` is a dynamic m
 
 | `AI_PROVIDER` | Provider | Behavior |
 |---|---|---|
-| `mock` (default) | `MockAiProvider` | Returns hardcoded "Hello World" HTML. Throws `UnprocessablePromptException` (422) if prompt contains `__cannot__` — useful for testing the error UX without OpenRouter. |
-| `openrouter` | `OpenRouterAiProvider` | Calls OpenRouter REST API, returns real LLM-generated HTML |
+| `mock` (default) | `MockAiProvider` | Returns hardcoded "Hello World" HTML. Returns the `CANNOT_INTERPRET` sentinel string when the prompt contains `__cannot__`; the base class detects it and throws `UnprocessablePromptException` (422) — useful for testing the error UX without OpenRouter. |
+| `openrouter` | `OpenRouterAiProvider` | Calls OpenRouter REST API; returns raw model text. The base class pipeline handles sentinel detection, HTML extraction, and URL sanitization. |
 
 ### Switching to OpenRouter
 
@@ -143,8 +145,8 @@ OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free   # or any free model fr
 
 `AiProvider.generate({ prompt, currentCode? })` returns `{ code: string, assistantMessage: string }`:
 - `code` — complete self-contained HTML document (`<!DOCTYPE html>…</html>`). Stored on the user `Message` that triggered the generation.
-- `currentCode` — when present (follow-up turns), the provider injects it as a prior user message wrapped in `<current_app>` tags so the LLM can apply edits to the existing app rather than regenerating from scratch.
-- `assistantMessage` — canned text returned by the provider, kept in the contract for future use but not consumed by `ChatsService` today (the service generates its own text in the DTO mapper).
+- `currentCode` — when present (follow-up turns), `AiProvider.buildMessages()` injects it as a prior user message wrapped in `<current_app>` tags so the LLM can apply edits to the existing app rather than regenerating from scratch. Concrete providers receive the fully assembled `ChatMessage[]` array and do not need to handle this themselves.
+- `assistantMessage` — canned text produced by the base class (first-turn vs. follow-up copy), kept in the contract for future use but not consumed by `ChatsService` today (the service generates its own text in the DTO mapper).
 
 ### System prompt
 
@@ -161,7 +163,7 @@ The base prompt is in [apps/backend/src/modules/ai/prompts/system-prompt.ts](app
 
 ### HTML extraction and sanitization
 
-The LLM output goes through three sequential defenses in `OpenRouterAiProvider.generate()`:
+The LLM output goes through three sequential defenses in `AiProvider.generate()`, shared automatically by every concrete provider. Concrete providers only supply the raw model text via `callModel()`:
 
 1. **Sentinel check** — before any HTML validation, the raw response is matched against `/^CANNOT_INTERPRET:\s*(.*)$/`. If matched, `UnprocessablePromptException` (HTTP 422) is thrown immediately and no code is stored. This must happen before `extractHtmlDocument` so it is not mistaken for a malformed HTML response.
 
@@ -266,7 +268,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 - **Module pattern**: each feature gets its own NestJS module under [apps/backend/src/modules/](apps/backend/src/modules/). `ChatsModule` and `AiModule` are the current examples. Register new modules in `AppModule`.
 - **DTOs + ValidationPipe**: all controller inputs must use a DTO class with `class-validator` decorators. The global `ValidationPipe` (whitelist + `forbidNonWhitelisted`) rejects undeclared properties automatically.
 - **Entity/DTO split**: the persistence entity (`chat.entity.ts`) reflects only what is stored. The HTTP response shape lives in `chat-response.dto.ts` and is constructed by `ChatsService.toChatResponseDto()`. Do not add presentation concerns (e.g. `role`, fabricated assistant messages) to the entity.
-- **Abstract provider pattern**: external services (AI, future integrations) are exposed as abstract classes (e.g. `AiProvider`) and injected via the NestJS DI token. `AiModule` is a dynamic module — call `AiModule.forRoot()` in the consuming module's `imports`. It registers only the concrete provider chosen by `AI_PROVIDER` via a `useFactory` that injects `ConfigService` (so the env value is read at DI resolution time, not at module graph construction time). Only the chosen provider is instantiated; the unused one is never created. `ChatsService` never imports a concrete provider.
+- **Abstract provider pattern (Template Method)**: external services (AI, future integrations) are exposed as abstract classes (e.g. `AiProvider`) and injected via the NestJS DI token. `AiProvider` uses the Template Method pattern: `generate()` is a non-abstract method that owns the full pipeline (message assembly, sentinel detection, HTML extraction, URL sanitization); concrete providers implement only the protected `callModel(messages: ChatMessage[])` hook that calls the model and returns the raw text. Any new provider gets the app-level rules for free. `AiModule` is a dynamic module — call `AiModule.forRoot()` in the consuming module's `imports`. It registers only the concrete provider chosen by `AI_PROVIDER` via a `useFactory` that injects `ConfigService` (so the env value is read at DI resolution time, not at module graph construction time). Only the chosen provider is instantiated; the unused one is never created. `ChatsService` never imports a concrete provider.
 - **Env vars**: add new variables to [apps/backend/.env](apps/backend/.env) and [apps/backend/.env.example](apps/backend/.env.example). Access them via `ConfigService` from `@nestjs/config` (`isGlobal: true`, no need to import `ConfigModule` in feature modules).
 - **ESM-only packages**: the backend compiles to CommonJS. Do not add ESM-only npm packages as static imports. Use Node 22 native `fetch` for HTTP calls to external APIs — it is available globally with no additional dependencies.
 
@@ -296,8 +298,8 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 | [apps/backend/src/main.ts](apps/backend/src/main.ts) | Bootstrap NestJS app, enable CORS + global ValidationPipe, listen on `PORT` |
 | [apps/backend/src/app.module.ts](apps/backend/src/app.module.ts) | Root NestJS module |
 | [apps/backend/src/modules/chats/chats.controller.ts](apps/backend/src/modules/chats/chats.controller.ts) | HTTP surface for chat endpoints |
-| [apps/backend/src/modules/ai/ai.provider.ts](apps/backend/src/modules/ai/ai.provider.ts) | Abstract contract for AI generation |
-| [apps/backend/src/modules/ai/providers/openrouter-ai.provider.ts](apps/backend/src/modules/ai/providers/openrouter-ai.provider.ts) | Concrete OpenRouter implementation |
+| [apps/backend/src/modules/ai/ai.provider.ts](apps/backend/src/modules/ai/ai.provider.ts) | Template Method base: `generate()` owns the full pipeline; concrete providers implement `callModel()` |
+| [apps/backend/src/modules/ai/providers/openrouter-ai.provider.ts](apps/backend/src/modules/ai/providers/openrouter-ai.provider.ts) | OpenRouter transport: `callModel()` does the fetch and returns raw model text |
 | [apps/backend/src/modules/ai/prompts/system-prompt.ts](apps/backend/src/modules/ai/prompts/system-prompt.ts) | System prompt sent to the LLM |
 | [apps/frontend/app/layout.tsx](apps/frontend/app/layout.tsx) | Root Next.js layout (fonts, metadata) |
 | [apps/frontend/app/page.tsx](apps/frontend/app/page.tsx) | Home route `/` — renders `<PromptForm />` |
@@ -331,7 +333,7 @@ Use `pnpm --filter <name> <script>` from the repo root, or `pnpm <script>` from 
 
 ## Intended direction
 
-Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal), 6 (unprocessable prompt handling — CANNOT_INTERPRET sentinel, HTTP 422, ephemeral error banner, generate-before-mutate ordering, `ApiErrorCode` constants), and 7 (regenerate — start-over button, `RegenerateConfirmModal`, `sessionStorage` prompt transport, `shared/storage-keys.ts`) are complete. Remaining next steps:
+Phases 1 (scaffolding), 2 (real AI integration), 3 (edit flow with code-as-context), 4 (code inspection — Preview/Code tabs with syntax highlighting and copy-to-clipboard), 5 (version history — message timestamps, per-version preview, rollback with truncation and confirmation modal), 6 (unprocessable prompt handling — CANNOT_INTERPRET sentinel, HTTP 422, ephemeral error banner, generate-before-mutate ordering, `ApiErrorCode` constants), 7 (regenerate — start-over button, `RegenerateConfirmModal`, `sessionStorage` prompt transport, `shared/storage-keys.ts`), and 8 (Template Method refactor — sentinel detection, HTML extraction, URL sanitization, message assembly, and `assistantMessage` copy moved from `OpenRouterAiProvider` into `AiProvider.generate()`; concrete providers reduced to `callModel()` transport only; `MockAiProvider` returns sentinel raw instead of throwing directly; dedicated `ai.provider.spec.ts` covering the full orchestration) are complete. Remaining next steps:
 
 1. **Streaming**: stream the LLM response token-by-token via SSE or chunked transfer to improve perceived latency.
 2. **Persistence**: replace `ChatsRepository`'s in-memory `Map` with a real database so chat history survives restarts.

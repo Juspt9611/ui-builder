@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { AiProvider } from '../ai.provider';
-import { AiGenerateInput, AiGenerateOutput } from '../types/ai.types';
-import { UnprocessablePromptException } from '../errors/unprocessable-prompt.exception';
+import { AiProvider, ChatMessage } from '../ai.provider';
+import { CANNOT_INTERPRET_SENTINEL } from '../errors/unprocessable-prompt.exception';
 
 const MOCK_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -28,14 +27,16 @@ const MOCK_HTML = `<!DOCTYPE html>
 </html>`;
 
 @Injectable()
-export class MockAiProvider implements AiProvider {
-  async generate(input: AiGenerateInput): Promise<AiGenerateOutput> {
-    if (input.prompt.includes('__cannot__')) {
-      throw new UnprocessablePromptException('Mock: prompt contained __cannot__ trigger.');
+export class MockAiProvider extends AiProvider {
+  protected async callModel(messages: ChatMessage[]): Promise<string> {
+    const hasCannotTrigger = messages
+      .filter((m) => m.role === 'user')
+      .some((m) => m.content.includes('__cannot__'));
+
+    if (hasCannotTrigger) {
+      return `${CANNOT_INTERPRET_SENTINEL}: Mock: prompt contained __cannot__ trigger.`;
     }
-    return {
-      code: MOCK_HTML,
-      assistantMessage: 'Here is your application! You can continue refining it by sending more instructions.',
-    };
+
+    return MOCK_HTML;
   }
 }
