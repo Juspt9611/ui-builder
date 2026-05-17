@@ -7,6 +7,8 @@ import ChatMessages from './ChatMessages';
 import ChatComposer from './ChatComposer';
 import CodePreview from './CodePreview';
 import CodeViewer from './CodeViewer';
+import PreviewSkeleton from './PreviewSkeleton';
+import CodeSkeleton from './CodeSkeleton';
 import TruncationConfirmModal from './TruncationConfirmModal';
 import ErrorBanner from './ErrorBanner';
 import { ApiErrorCode } from '@/services/errors';
@@ -137,7 +139,9 @@ export default function ChatWorkspace({ initialChat }: ChatWorkspaceProps) {
             </div>
           </div>
           <div className="relative flex-1 overflow-hidden">
-            {activeTab === 'preview' ? (
+            {isLoading ? (
+              activeTab === 'preview' ? <PreviewSkeleton /> : <CodeSkeleton />
+            ) : activeTab === 'preview' ? (
               <CodePreview code={previewCode} />
             ) : (
               <CodeViewer code={previewCode} />
